@@ -259,6 +259,19 @@ cd database
 brain stats
 ```
 
+## Companion Resources
+
+This self-hosted implementation follows the architecture from **Nate B. Jones' Open Brain guide**. For workflow optimization, check out the companion resources:
+
+- **[Open Brain: Companion Prompts](https://promptkit.natebjones.com/20260224_uq1_promptkit_1)** - Includes:
+  - Memory Migration prompts (import AI memories)
+  - Second Brain Migration (import from Notion/Obsidian)
+  - Open Brain Spark (personalized use cases)
+  - Quick Capture Templates (optimized metadata)
+  - Weekly Review ritual
+
+These prompts work with the self-hosted version - just use the MCP tools to import and organize your knowledge.
+
 ## License
 
 Adapted from the Open Brain guide by Nate B. Jones

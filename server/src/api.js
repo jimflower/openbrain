@@ -126,7 +126,7 @@ app.post('/search', async (req, res) => {
     const queryEmbedding = await generateEmbedding(query);
     
     // Search
-    const results = await db.searchThoughts(queryEmbedding, threshold, limit);
+    const results = await db.searchThoughts(queryEmbedding, threshold, limit, {});
     
     res.json({
       success: true,

@@ -142,7 +142,7 @@ async function addCommand(content) {
     const meta = result.thought.metadata;
     if (meta && Object.keys(meta).length > 0) {
       if (meta.type) console.log(`Type: ${meta.type}`);
-      if (meta.tags?.length) console.log(`Tags: ${meta.tags.join(', ')}`);
+      if (meta.topics?.length) console.log(`Topics: ${meta.topics.join(', ')}`);
       if (meta.people?.length) console.log(`People: ${meta.people.join(', ')}`);
       if (meta.action_items?.length) {
         console.log('Action items:');

@@ -34,16 +34,13 @@ if (METADATA_MODE === 'api') {
   }
 }
 
-const METADATA_PROMPT = `Extract metadata from the following thought. Respond ONLY with valid JSON, no explanation.
-
-Return this structure:
-{
-  "type": "one of: thought, task, note, person_note, idea, decision, question, meeting_note, resource",
-  "tags": ["2-5 relevant keywords"],
-  "people": ["names mentioned"],
-  "action_items": ["any tasks or follow-ups"],
-  "summary": "one sentence summary"
-}
+const METADATA_PROMPT = `Extract metadata from the user's captured thought. Return JSON with:
+- "people": array of people mentioned (empty if none)
+- "action_items": array of implied to-dos (empty if none)
+- "dates_mentioned": array of dates YYYY-MM-DD (empty if none)
+- "topics": array of 1-3 short topic tags (always at least one)
+- "type": one of "observation", "task", "idea", "reference", "person_note"
+Only extract what's explicitly there.
 
 Thought: {{CONTENT}}
 
@@ -154,24 +151,23 @@ function extractBasicMetadata(content) {
   }
   
   // Determine type based on keywords
-  let type = 'note';
-  if (content.includes('?')) type = 'question';
-  else if (words.some(w => ['todo', 'task', 'need to', 'should', 'must'].includes(w))) type = 'task';
-  else if (words.some(w => ['decided', 'decision', 'choosing'].includes(w))) type = 'decision';
-  else if (words.some(w => ['meeting', 'discussed', 'met with'].includes(w))) type = 'meeting_note';
+  let type = 'observation';
+  if (words.some(w => ['todo', 'task', 'need to', 'should', 'must'].includes(w))) type = 'task';
   else if (words.some(w => ['idea', 'what if', 'could we'].includes(w))) type = 'idea';
+  else if (people.length > 0) type = 'person_note';
+  else if (words.some(w => ['http', 'link', 'article', 'book', 'paper'].includes(w))) type = 'reference';
   
-  // Extract basic tags
-  const tags = [];
-  if (content.length < 100) tags.push('quick-note');
-  if (people.length > 0) tags.push('people');
+  // Extract basic topics
+  const topics = ['uncategorized'];
+  if (people.length > 0) topics.push('people');
+  if (content.length < 50) topics.push('quick-note');
   
   return {
     type,
-    tags: tags.slice(0, 5),
+    topics: topics.slice(0, 3),
     people: [...new Set(people)],
     action_items: [],
-    summary: content.slice(0, 60) + (content.length > 60 ? '...' : ''),
+    dates_mentioned: [],
   };
 }
 
@@ -180,11 +176,11 @@ function extractBasicMetadata(content) {
  */
 function cleanMetadata(metadata) {
   return {
-    type: metadata.type || 'note',
-    tags: (metadata.tags || []).slice(0, 5),
+    type: metadata.type || 'observation',
+    topics: (metadata.topics || ['uncategorized']).slice(0, 3),
     people: (metadata.people || []).slice(0, 10),
     action_items: (metadata.action_items || []).slice(0, 5),
-    summary: metadata.summary || '',
+    dates_mentioned: (metadata.dates_mentioned || []).slice(0, 5),
   };
 }
 

@@ -32,13 +32,13 @@ export async function storeThought(content, embedding, metadata = {}) {
 /**
  * Search thoughts by semantic similarity
  */
-export async function searchThoughts(queryEmbedding, threshold = 0.3, limit = 10) {
+export async function searchThoughts(queryEmbedding, threshold = 0.3, limit = 10, filter = {}) {
   const query = `
-    SELECT * FROM match_thoughts($1, $2, $3)
+    SELECT * FROM match_thoughts($1, $2, $3, $4)
   `;
   
   const embeddingString = pgvector.toSql(queryEmbedding);
-  const result = await pool.query(query, [embeddingString, threshold, limit]);
+  const result = await pool.query(query, [embeddingString, threshold, limit, filter]);
   return result.rows;
 }
 

@@ -35,62 +35,78 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: 'search_thoughts',
-        description: 'Search your personal knowledge base using semantic similarity. Use this to find notes, ideas, decisions, or information you\'ve captured before.',
+        description: 'Search captured thoughts by meaning. Use this when the user asks about a topic, person, or idea they\'ve previously captured.',
         inputSchema: {
           type: 'object',
           properties: {
             query: {
               type: 'string',
-              description: 'The search query - can be a question, keywords, or description of what you\'re looking for',
-            },
-            threshold: {
-              type: 'number',
-              description: 'Similarity threshold (0.0 to 1.0). Lower = more results. Default: 0.3',
-              default: 0.3,
+              description: 'What to search for',
             },
             limit: {
               type: 'number',
-              description: 'Maximum number of results to return. Default: 10',
+              description: 'Maximum number of results. Default: 10',
               default: 10,
+            },
+            threshold: {
+              type: 'number',
+              description: 'Similarity threshold (0.0-1.0). Default: 0.5',
+              default: 0.5,
             },
           },
           required: ['query'],
         },
       },
       {
-        name: 'capture_thought',
-        description: 'Save a new thought, note, idea, task, or any information to your knowledge base. It will be automatically embedded and searchable.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            content: {
-              type: 'string',
-              description: 'The thought, note, idea, or information to capture',
-            },
-          },
-          required: ['content'],
-        },
-      },
-      {
-        name: 'recent_thoughts',
-        description: 'Get your most recently captured thoughts. Useful for reviewing what you\'ve saved recently or finding something you just added.',
+        name: 'list_thoughts',
+        description: 'List recently captured thoughts with optional filters by type, topic, person, or time range.',
         inputSchema: {
           type: 'object',
           properties: {
             limit: {
               type: 'number',
-              description: 'Number of recent thoughts to return. Default: 20',
-              default: 20,
+              description: 'Number of thoughts to return. Default: 10',
+              default: 10,
+            },
+            type: {
+              type: 'string',
+              description: 'Filter by type: observation, task, idea, reference, person_note',
+            },
+            topic: {
+              type: 'string',
+              description: 'Filter by topic tag',
+            },
+            person: {
+              type: 'string',
+              description: 'Filter by person mentioned',
+            },
+            days: {
+              type: 'number',
+              description: 'Only thoughts from the last N days',
             },
           },
         },
       },
       {
-        name: 'brain_stats',
-        description: 'Get statistics about your knowledge base - total thoughts, recent activity, etc.',
+        name: 'thought_stats',
+        description: 'Get a summary of all captured thoughts: totals, types, top topics, and people.',
         inputSchema: {
           type: 'object',
           properties: {},
+        },
+      },
+      {
+        name: 'capture_thought',
+        description: 'Save a new thought to the Open Brain. Generates an embedding and extracts metadata automatically. Use this when the user wants to save something to their brain directly from any AI client.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            content: {
+              type: 'string',
+              description: 'The thought to capture - a clear, standalone statement that will make sense when retrieved later',
+            },
+          },
+          required: ['content'],
         },
       },
     ],
@@ -106,7 +122,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case 'search_thoughts': {
-        const { query, threshold = 0.3, limit = 10 } = args;
+        const { query, threshold = 0.5, limit = 10 } = args;
         
         if (!query) {
           throw new Error('Query is required');
@@ -116,46 +132,140 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const queryEmbedding = await generateEmbedding(query);
         
         // Search
-        const results = await db.searchThoughts(queryEmbedding, threshold, limit);
+        const results = await db.searchThoughts(queryEmbedding, threshold, limit, {});
         
         if (results.length === 0) {
           return {
             content: [{
               type: 'text',
-              text: `No thoughts found matching "${query}". Try:\n- Using different keywords\n- Lowering the threshold (try 0.2)\n- Broadening your search`,
+              text: `No thoughts found matching "${query}".`,
             }],
           };
         }
         
-        // Format results
-        let response = `Found ${results.length} thought${results.length === 1 ? '' : 's'} matching "${query}":\n\n`;
-        
-        results.forEach((thought, idx) => {
-          const date = new Date(thought.created_at).toLocaleDateString();
-          const similarity = (thought.similarity * 100).toFixed(0);
-          
-          response += `${idx + 1}. [${similarity}% match] ${date}\n`;
-          response += `   ${thought.content}\n`;
-          
-          if (thought.metadata && Object.keys(thought.metadata).length > 0) {
-            if (thought.metadata.type) {
-              response += `   Type: ${thought.metadata.type}\n`;
-            }
-            if (thought.metadata.tags && thought.metadata.tags.length > 0) {
-              response += `   Tags: ${thought.metadata.tags.join(', ')}\n`;
-            }
-            if (thought.metadata.people && thought.metadata.people.length > 0) {
-              response += `   People: ${thought.metadata.people.join(', ')}\n`;
-            }
-          }
-          
-          response += '\n';
+        // Format results matching original
+        const formatted = results.map((t, i) => {
+          const m = t.metadata || {};
+          const parts = [
+            `--- Result ${i + 1} (${(t.similarity * 100).toFixed(1)}% match) ---`,
+            `Captured: ${new Date(t.created_at).toLocaleDateString()}`,
+            `Type: ${m.type || 'unknown'}`,
+          ];
+          if (Array.isArray(m.topics) && m.topics.length)
+            parts.push(`Topics: ${m.topics.join(', ')}`);
+          if (Array.isArray(m.people) && m.people.length)
+            parts.push(`People: ${m.people.join(', ')}`);
+          if (Array.isArray(m.action_items) && m.action_items.length)
+            parts.push(`Actions: ${m.action_items.join('; ')}`);
+          parts.push(`\n${t.content}`);
+          return parts.join('\n');
         });
         
         return {
           content: [{
             type: 'text',
-            text: response,
+            text: `Found ${results.length} thought(s):\n\n${formatted.join('\n\n')}`,
+          }],
+        };
+      }
+
+      case 'list_thoughts': {
+        const { limit = 10, type, topic, person, days } = args;
+        
+        let thoughts = await db.getRecentThoughts(limit);
+        
+        // Apply filters
+        if (type) {
+          thoughts = thoughts.filter(t => t.metadata?.type === type);
+        }
+        if (topic) {
+          thoughts = thoughts.filter(t => 
+            Array.isArray(t.metadata?.topics) && t.metadata.topics.includes(topic)
+          );
+        }
+        if (person) {
+          thoughts = thoughts.filter(t => 
+            Array.isArray(t.metadata?.people) && t.metadata.people.includes(person)
+          );
+        }
+        if (days) {
+          const since = new Date();
+          since.setDate(since.getDate() - days);
+          thoughts = thoughts.filter(t => new Date(t.created_at) >= since);
+        }
+        
+        if (thoughts.length === 0) {
+          return {
+            content: [{
+              type: 'text',
+              text: 'No thoughts found.',
+            }],
+          };
+        }
+        
+        const formatted = thoughts.slice(0, limit).map((t, i) => {
+          const m = t.metadata || {};
+          const topics = Array.isArray(m.topics) ? m.topics.join(', ') : '';
+          return `${i + 1}. [${new Date(t.created_at).toLocaleDateString()}] (${m.type || '??'}${topics ? ' - ' + topics : ''})\n   ${t.content}`;
+        });
+        
+        return {
+          content: [{
+            type: 'text',
+            text: `${thoughts.length} recent thought(s):\n\n${formatted.join('\n\n')}`,
+          }],
+        };
+      }
+
+      case 'thought_stats': {
+        const thoughts = await db.getRecentThoughts(10000); // Get all
+        const stats = await db.getStats();
+        
+        const types = {};
+        const topics = {};
+        const people = {};
+        
+        for (const r of thoughts) {
+          const m = r.metadata || {};
+          if (m.type) types[m.type] = (types[m.type] || 0) + 1;
+          if (Array.isArray(m.topics))
+            for (const t of m.topics) topics[t] = (topics[t] || 0) + 1;
+          if (Array.isArray(m.people))
+            for (const p of m.people) people[p] = (people[p] || 0) + 1;
+        }
+        
+        const sort = (o) => Object.entries(o)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 10);
+        
+        const lines = [
+          `Total thoughts: ${stats.total_thoughts || 0}`,
+          `Date range: ${
+            thoughts.length >= 2
+              ? new Date(thoughts[thoughts.length - 1].created_at).toLocaleDateString() +
+                ' → ' +
+                new Date(thoughts[0].created_at).toLocaleDateString()
+              : 'N/A'
+          }`,
+          '',
+          'Types:',
+          ...sort(types).map(([k, v]) => `  ${k}: ${v}`),
+        ];
+        
+        if (Object.keys(topics).length) {
+          lines.push('', 'Top topics:');
+          for (const [k, v] of sort(topics)) lines.push(`  ${k}: ${v}`);
+        }
+        
+        if (Object.keys(people).length) {
+          lines.push('', 'People mentioned:');
+          for (const [k, v] of sort(people)) lines.push(`  ${k}: ${v}`);
+        }
+        
+        return {
+          content: [{
+            type: 'text',
+            text: lines.join('\n'),
           }],
         };
       }
@@ -173,106 +283,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           extractMetadata(content),
         ]);
         
-        // Store
-        const thought = await db.storeThought(content, embedding, metadata);
+        // Store with MCP source marker
+        const thought = await db.storeThought(content, embedding, { ...metadata, source: 'mcp' });
         
-        // Format confirmation
-        let confirmation = `✓ Captured\n\n"${content}"\n\n`;
-        
-        if (metadata && Object.keys(metadata).length > 0) {
-          confirmation += 'Metadata:\n';
-          if (metadata.type) confirmation += `  Type: ${metadata.type}\n`;
-          if (metadata.tags && metadata.tags.length > 0) {
-            confirmation += `  Tags: ${metadata.tags.join(', ')}\n`;
-          }
-          if (metadata.people && metadata.people.length > 0) {
-            confirmation += `  People: ${metadata.people.join(', ')}\n`;
-          }
-          if (metadata.action_items && metadata.action_items.length > 0) {
-            confirmation += `  Action items:\n`;
-            metadata.action_items.forEach(item => {
-              confirmation += `    - ${item}\n`;
-            });
-          }
-        }
-        
-        confirmation += `\nID: ${thought.id} | Saved: ${new Date(thought.created_at).toLocaleString()}`;
+        // Format confirmation matching original
+        let confirmation = `Captured as ${metadata.type || 'thought'}`;
+        if (Array.isArray(metadata.topics) && metadata.topics.length)
+          confirmation += ` — ${metadata.topics.join(', ')}`;
+        if (Array.isArray(metadata.people) && metadata.people.length)
+          confirmation += ` | People: ${metadata.people.join(', ')}`;
+        if (Array.isArray(metadata.action_items) && metadata.action_items.length)
+          confirmation += ` | Actions: ${metadata.action_items.join('; ')}`;
         
         return {
           content: [{
             type: 'text',
             text: confirmation,
-          }],
-        };
-      }
-
-      case 'recent_thoughts': {
-        const { limit = 20 } = args;
-        
-        const thoughts = await db.getRecentThoughts(limit);
-        
-        if (thoughts.length === 0) {
-          return {
-            content: [{
-              type: 'text',
-              text: 'No thoughts captured yet. Use capture_thought to add your first one!',
-            }],
-          };
-        }
-        
-        let response = `Your ${thoughts.length} most recent thought${thoughts.length === 1 ? '' : 's'}:\n\n`;
-        
-        thoughts.forEach((thought, idx) => {
-          const date = new Date(thought.created_at).toLocaleDateString();
-          const time = new Date(thought.created_at).toLocaleTimeString([], { 
-            hour: '2-digit', 
-            minute: '2-digit' 
-          });
-          
-          response += `${idx + 1}. ${date} ${time}\n`;
-          response += `   ${thought.content}\n`;
-          
-          if (thought.metadata?.type) {
-            response += `   [${thought.metadata.type}]\n`;
-          }
-          
-          response += '\n';
-        });
-        
-        return {
-          content: [{
-            type: 'text',
-            text: response,
-          }],
-        };
-      }
-
-      case 'brain_stats': {
-        const stats = await db.getStats();
-        
-        let response = '📊 Brain Statistics\n\n';
-        response += `Total thoughts: ${stats.total_thoughts || 0}\n`;
-        response += `This week: ${stats.this_week || 0}\n`;
-        response += `This month: ${stats.this_month || 0}\n\n`;
-        
-        if (stats.first_thought) {
-          const firstDate = new Date(stats.first_thought).toLocaleDateString();
-          response += `First thought: ${firstDate}\n`;
-        }
-        
-        if (stats.latest_thought) {
-          const latestDate = new Date(stats.latest_thought).toLocaleDateString();
-          const latestTime = new Date(stats.latest_thought).toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit'
-          });
-          response += `Latest thought: ${latestDate} ${latestTime}\n`;
-        }
-        
-        return {
-          content: [{
-            type: 'text',
-            text: response,
           }],
         };
       }
