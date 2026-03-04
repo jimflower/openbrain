@@ -1,0 +1,36 @@
+[Unit]
+Description=Open Brain MCP Server
+Documentation=https://github.com/yourusername/open-brain-selfhosted
+After=network.target postgresql.service ollama.service openbrain-api.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=YOUR_USER
+Group=YOUR_USER
+WorkingDirectory=/path/to/open-brain-selfhosted/server
+
+# Main process
+ExecStart=/usr/bin/node src/mcp.js
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Environment
+Environment=NODE_ENV=production
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=openbrain-mcp
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/path/to/open-brain-selfhosted/server
+
+[Install]
+WantedBy=multi-user.target

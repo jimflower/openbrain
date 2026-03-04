@@ -1,0 +1,38 @@
+{
+  "name": "open-brain-server",
+  "version": "1.0.0",
+  "description": "Self-hosted Open Brain API and MCP server",
+  "main": "src/api.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/api.js",
+    "mcp": "node src/mcp.js",
+    "dev": "NODE_ENV=development node src/api.js",
+    "dev:mcp": "NODE_ENV=development node src/mcp.js",
+    "test": "node src/test.js"
+  },
+  "keywords": [
+    "knowledge-base",
+    "mcp",
+    "semantic-search",
+    "vector-database"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.18.3",
+    "pg": "^8.11.3",
+    "pgvector": "^0.1.8",
+    "ollama": "^0.5.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "openai": "^4.28.0",
+    "@anthropic-ai/sdk": "^0.20.0",
+    "@google/generative-ai": "^0.2.0",
+    "cors": "^2.8.5",
+    "helmet": "^7.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
