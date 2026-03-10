@@ -10,8 +10,14 @@ package-lock.json
 
 # Database backups
 database/backups/
-*.sql
 *.sql.gz
+
+# Ignore raw SQL dumps but track schema/migrations
+*.dump.sql
+# Exception: track schema and migrations
+!database/schema.sql
+!database/migrate_*.sql
+!database/setup.sh
 
 # Logs
 logs/

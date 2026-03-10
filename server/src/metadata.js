@@ -12,7 +12,6 @@ const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
 const OLLAMA_LLM_MODEL = process.env.OLLAMA_LLM_MODEL || 'llama3:8b';
 const METADATA_API_MODEL = process.env.METADATA_API_MODEL || 'claude-haiku';
 
-// Initialize clients
 let ollama = null;
 let anthropic = null;
 let openai = null;
@@ -23,28 +22,39 @@ if (METADATA_MODE === 'local') {
 }
 
 if (METADATA_MODE === 'api') {
-  if (process.env.ANTHROPIC_API_KEY) {
-    anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  }
-  if (process.env.OPENAI_API_KEY) {
-    openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  }
-  if (process.env.GOOGLE_API_KEY) {
-    googleAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
-  }
+  if (process.env.ANTHROPIC_API_KEY) anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  if (process.env.OPENAI_API_KEY) openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (process.env.GOOGLE_API_KEY) googleAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 }
 
-const METADATA_PROMPT = `Extract metadata from the user's captured thought. Return JSON with:
+const TODAY = new Date().toISOString().split('T')[0];
+
+const METADATA_PROMPT = `Extract metadata from the user's captured thought. Return JSON only with these fields:
 - "people": array of people mentioned (empty if none)
 - "action_items": array of implied to-dos (empty if none)
 - "dates_mentioned": array of dates YYYY-MM-DD (empty if none)
 - "topics": array of 1-3 short topic tags (always at least one)
 - "type": one of "observation", "task", "idea", "reference", "person_note"
-Only extract what's explicitly there.
+- "event_date": ISO date (YYYY-MM-DD) if the thought describes something that happened on a specific date. Use today (${TODAY}) if the event is clearly recent/today. Null if no specific date applies.
+
+Only extract what's explicitly there. Return valid JSON only, no markdown.
 
 Thought: {{CONTENT}}
 
 JSON:`;
+
+const RELATIONSHIP_PROMPT = `Classify the relationship between two statements.
+
+Statement A (existing): "{{EXISTING}}"
+Statement B (new): "{{NEW}}"
+
+Choose the single most accurate relationship type:
+- CONTRADICTS: B directly contradicts, reverses, or replaces A (status changed, fact corrected, outcome reversed)
+- EXTENDS: B adds new information about the same subject as A (elaborates, updates, continues the same thread)
+- INFERS: A and B are related and together imply something meaningful, but neither contradicts nor extends the other
+- UNRELATED: A and B are about sufficiently different topics — no meaningful relationship
+
+Answer with exactly one word on the first line (CONTRADICTS/EXTENDS/INFERS/UNRELATED), then one brief sentence explaining why.`;
 
 /**
  * Extract metadata using Ollama (local)
@@ -52,33 +62,40 @@ JSON:`;
 async function extractLocalMetadata(content) {
   try {
     const prompt = METADATA_PROMPT.replace('{{CONTENT}}', content);
-    
-    const response = await ollama.generate({
-      model: OLLAMA_LLM_MODEL,
-      prompt: prompt,
-      stream: false,
-    });
-    
-    // Try to parse JSON from response
+    const response = await ollama.generate({ model: OLLAMA_LLM_MODEL, prompt, stream: false });
     const text = response.response.trim();
-    
-    // Extract JSON from markdown code blocks if present
+
     let jsonText = text;
     const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
-    if (jsonMatch) {
-      jsonText = jsonMatch[1];
-    }
-    
+    if (jsonMatch) jsonText = jsonMatch[1];
+
     try {
-      const metadata = JSON.parse(jsonText);
-      return cleanMetadata(metadata);
-    } catch (parseError) {
-      console.warn('Failed to parse local metadata, using basic extraction');
+      return cleanMetadata(JSON.parse(jsonText));
+    } catch {
       return extractBasicMetadata(content);
     }
   } catch (error) {
     console.error('Ollama metadata error:', error.message);
     return extractBasicMetadata(content);
+  }
+}
+
+/**
+ * Classify relationship using Ollama (local)
+ */
+async function classifyRelationshipLocal(existingContent, newContent) {
+  try {
+    const prompt = RELATIONSHIP_PROMPT
+      .replace('{{EXISTING}}', existingContent)
+      .replace('{{NEW}}', newContent);
+    const response = await ollama.generate({ model: OLLAMA_LLM_MODEL, prompt, stream: false });
+    const text = response.response.trim();
+    const firstLine = text.split('\n')[0].trim().toUpperCase();
+    const type = ['CONTRADICTS', 'EXTENDS', 'INFERS'].includes(firstLine) ? firstLine.toLowerCase() : 'unrelated';
+    return { type, reason: text.split('\n').slice(1).join(' ').trim() };
+  } catch (error) {
+    console.error('Relationship classify error:', error.message);
+    return { type: 'unrelated', reason: 'check failed' };
   }
 }
 
@@ -89,85 +106,85 @@ async function extractClaudeMetadata(content) {
   const message = await anthropic.messages.create({
     model: 'claude-3-haiku-20240307',
     max_tokens: 500,
-    messages: [{
-      role: 'user',
-      content: METADATA_PROMPT.replace('{{CONTENT}}', content),
-    }],
+    messages: [{ role: 'user', content: METADATA_PROMPT.replace('{{CONTENT}}', content) }],
   });
-  
-  const text = message.content[0].text.trim();
-  return JSON.parse(text);
+  return JSON.parse(message.content[0].text.trim());
 }
 
 /**
- * Extract metadata using OpenAI API
+ * Classify relationship using Claude API
+ */
+async function classifyRelationshipClaude(existingContent, newContent) {
+  try {
+    const prompt = RELATIONSHIP_PROMPT
+      .replace('{{EXISTING}}', existingContent)
+      .replace('{{NEW}}', newContent);
+    const message = await anthropic.messages.create({
+      model: 'claude-3-haiku-20240307',
+      max_tokens: 100,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const text = message.content[0].text.trim();
+    const firstLine = text.split('\n')[0].trim().toUpperCase();
+    const type = ['CONTRADICTS', 'EXTENDS', 'INFERS'].includes(firstLine) ? firstLine.toLowerCase() : 'unrelated';
+    return { type, reason: text.split('\n').slice(1).join(' ').trim() };
+  } catch (error) {
+    console.error('Relationship classify error:', error.message);
+    return { type: 'unrelated', reason: 'check failed' };
+  }
+}
+
+/**
+ * Extract metadata using OpenAI
  */
 async function extractOpenAIMetadata(content) {
   const response = await openai.chat.completions.create({
     model: 'gpt-4o-mini',
-    messages: [{
-      role: 'user',
-      content: METADATA_PROMPT.replace('{{CONTENT}}', content),
-    }],
+    messages: [{ role: 'user', content: METADATA_PROMPT.replace('{{CONTENT}}', content) }],
     response_format: { type: 'json_object' },
     max_tokens: 500,
   });
-  
-  const text = response.choices[0].message.content.trim();
+  return JSON.parse(response.choices[0].message.content.trim());
+}
+
+/**
+ * Extract metadata using Google Gemini
+ */
+async function extractGeminiMetadata(content) {
+  const model = googleAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const result = await model.generateContent(METADATA_PROMPT.replace('{{CONTENT}}', content));
+  let text = result.response.text().trim();
+  const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
+  if (jsonMatch) text = jsonMatch[1];
   return JSON.parse(text);
 }
 
 /**
- * Extract metadata using Google Gemini API
- */
-async function extractGeminiMetadata(content) {
-  const model = googleAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-  const result = await model.generateContent(
-    METADATA_PROMPT.replace('{{CONTENT}}', content)
-  );
-  const text = result.response.text().trim();
-  
-  // Extract JSON from response
-  let jsonText = text;
-  const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
-  if (jsonMatch) {
-    jsonText = jsonMatch[1];
-  }
-  
-  return JSON.parse(jsonText);
-}
-
-/**
- * Basic metadata extraction (fallback)
+ * Basic metadata extraction (fallback — no LLM)
  */
 function extractBasicMetadata(content) {
   const words = content.toLowerCase().split(/\s+/);
-  
-  // Extract potential names (capitalized words)
   const people = [];
   const nameMatches = content.match(/\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\b/g);
-  if (nameMatches) {
-    people.push(...nameMatches.slice(0, 5));
-  }
-  
-  // Determine type based on keywords
+  if (nameMatches) people.push(...nameMatches.slice(0, 5));
+
   let type = 'observation';
-  if (words.some(w => ['todo', 'task', 'need to', 'should', 'must'].includes(w))) type = 'task';
-  else if (words.some(w => ['idea', 'what if', 'could we'].includes(w))) type = 'idea';
+  if (words.some(w => ['todo', 'task', 'need', 'should', 'must'].includes(w))) type = 'task';
+  else if (words.some(w => ['idea', 'what if', 'could'].includes(w))) type = 'idea';
   else if (people.length > 0) type = 'person_note';
   else if (words.some(w => ['http', 'link', 'article', 'book', 'paper'].includes(w))) type = 'reference';
-  
-  // Extract basic topics
+
   const topics = ['uncategorized'];
   if (people.length > 0) topics.push('people');
   if (content.length < 50) topics.push('quick-note');
-  
+
   return {
     type,
     topics: topics.slice(0, 3),
     people: [...new Set(people)],
     action_items: [],
     dates_mentioned: [],
+    event_date: null,
   };
 }
 
@@ -181,6 +198,7 @@ function cleanMetadata(metadata) {
     people: (metadata.people || []).slice(0, 10),
     action_items: (metadata.action_items || []).slice(0, 5),
     dates_mentioned: (metadata.dates_mentioned || []).slice(0, 5),
+    event_date: metadata.event_date || null,
   };
 }
 
@@ -188,48 +206,56 @@ function cleanMetadata(metadata) {
  * Main metadata extraction function
  */
 export async function extractMetadata(content) {
-  if (METADATA_MODE === 'skip') {
-    return extractBasicMetadata(content);
-  }
-  
+  if (METADATA_MODE === 'skip') return extractBasicMetadata(content);
+
   try {
     if (METADATA_MODE === 'local') {
       return await extractLocalMetadata(content);
     }
-    
+
     if (METADATA_MODE === 'api') {
-      // Try API providers in order of preference
       if (METADATA_API_MODEL === 'claude-haiku' && anthropic) {
-        const metadata = await extractClaudeMetadata(content);
-        return cleanMetadata(metadata);
+        return cleanMetadata(await extractClaudeMetadata(content));
       } else if (METADATA_API_MODEL === 'gpt-4o-mini' && openai) {
-        const metadata = await extractOpenAIMetadata(content);
-        return cleanMetadata(metadata);
+        return cleanMetadata(await extractOpenAIMetadata(content));
       } else if (METADATA_API_MODEL === 'gemini-flash' && googleAI) {
-        const metadata = await extractGeminiMetadata(content);
-        return cleanMetadata(metadata);
+        return cleanMetadata(await extractGeminiMetadata(content));
+      } else if (anthropic) {
+        return cleanMetadata(await extractClaudeMetadata(content));
+      } else if (openai) {
+        return cleanMetadata(await extractOpenAIMetadata(content));
+      } else if (googleAI) {
+        return cleanMetadata(await extractGeminiMetadata(content));
       } else {
-        // Try any available API
-        if (anthropic) {
-          const metadata = await extractClaudeMetadata(content);
-          return cleanMetadata(metadata);
-        } else if (openai) {
-          const metadata = await extractOpenAIMetadata(content);
-          return cleanMetadata(metadata);
-        } else if (googleAI) {
-          const metadata = await extractGeminiMetadata(content);
-          return cleanMetadata(metadata);
-        } else {
-          throw new Error('No API keys configured');
-        }
+        throw new Error('No API keys configured');
       }
     }
   } catch (error) {
     console.error('Metadata extraction error:', error.message);
     return extractBasicMetadata(content);
   }
-  
+
   return extractBasicMetadata(content);
+}
+
+/**
+ * Classify the relationship between two thoughts.
+ * Returns { type: 'contradicts'|'extends'|'infers'|'unrelated', reason: string }
+ */
+export async function classifyRelationship(existingContent, newContent) {
+  if (METADATA_MODE === 'skip') return { type: 'unrelated', reason: 'skip mode' };
+
+  try {
+    if (METADATA_MODE === 'local') {
+      return await classifyRelationshipLocal(existingContent, newContent);
+    }
+    if (METADATA_MODE === 'api' && anthropic) {
+      return await classifyRelationshipClaude(existingContent, newContent);
+    }
+  } catch (error) {
+    console.error('Relationship classification failed:', error.message);
+  }
+  return { type: 'unrelated', reason: 'unavailable' };
 }
 
 /**
@@ -237,9 +263,8 @@ export async function extractMetadata(content) {
  */
 export async function testMetadataService() {
   try {
-    const testContent = "Met with Sarah about the Q2 roadmap. Need to follow up on the API redesign.";
+    const testContent = "Met with Sarah about the Q2 roadmap yesterday. Need to follow up on the API redesign.";
     const metadata = await extractMetadata(testContent);
-    
     return {
       success: true,
       mode: METADATA_MODE,
@@ -247,15 +272,8 @@ export async function testMetadataService() {
       metadata,
     };
   } catch (error) {
-    return {
-      success: false,
-      mode: METADATA_MODE,
-      error: error.message,
-    };
+    return { success: false, mode: METADATA_MODE, error: error.message };
   }
 }
 
-export default {
-  extractMetadata,
-  testMetadataService,
-};
+export default { extractMetadata, classifyRelationship, testMetadataService };
