@@ -29,13 +29,14 @@ if (METADATA_MODE === 'api') {
 
 const TODAY = new Date().toISOString().split('T')[0];
 
-const METADATA_PROMPT = `Extract metadata from the user's captured thought. Return JSON only with these fields:
+const METADATA_PROMPT = `Extract metadata from the user's captured thought. Today is ${TODAY}. Return JSON only with these fields:
 - "people": array of people mentioned (empty if none)
 - "action_items": array of implied to-dos (empty if none)
 - "dates_mentioned": array of dates YYYY-MM-DD (empty if none)
 - "topics": array of 1-3 short topic tags (always at least one)
 - "type": one of "observation", "task", "idea", "reference", "person_note"
 - "event_date": ISO date (YYYY-MM-DD) if the thought describes something that happened on a specific date. Use today (${TODAY}) if the event is clearly recent/today. Null if no specific date applies.
+- "expires_at": ISO date (YYYY-MM-DD) if the thought is about something time-sensitive that will become irrelevant after a certain point — e.g. a meeting tomorrow, a deadline this week, a temporary state ("I'm travelling next week"), a one-off event. Set to the day AFTER the thing is expected to be over. Null for permanent or ongoing facts (preferences, biographical info, skills, decisions, relationships, general observations).
 
 Only extract what's explicitly there. Return valid JSON only, no markdown.
 
@@ -185,6 +186,7 @@ function extractBasicMetadata(content) {
     action_items: [],
     dates_mentioned: [],
     event_date: null,
+    expires_at: null,
   };
 }
 
@@ -199,6 +201,7 @@ function cleanMetadata(metadata) {
     action_items: (metadata.action_items || []).slice(0, 5),
     dates_mentioned: (metadata.dates_mentioned || []).slice(0, 5),
     event_date: metadata.event_date || null,
+    expires_at: metadata.expires_at || null,
   };
 }
 

@@ -21,14 +21,14 @@ _regClient.release();
  * @param {object} metadata
  * @param {Date|string|null} eventDate - when the described event happened (vs. when captured)
  */
-export async function storeThought(content, embedding, metadata = {}, eventDate = null) {
+export async function storeThought(content, embedding, metadata = {}, eventDate = null, expiresAt = null) {
   const query = `
-    INSERT INTO thoughts (content, embedding, metadata, event_date)
-    VALUES ($1, $2, $3, $4)
-    RETURNING id, content, metadata, created_at, event_date, superseded_by
+    INSERT INTO thoughts (content, embedding, metadata, event_date, expires_at)
+    VALUES ($1, $2, $3, $4, $5)
+    RETURNING id, content, metadata, created_at, event_date, superseded_by, expires_at
   `;
   const embeddingString = pgvector.toSql(embedding);
-  const result = await pool.query(query, [content, embeddingString, metadata, eventDate || null]);
+  const result = await pool.query(query, [content, embeddingString, metadata, eventDate || null, expiresAt || null]);
   return result.rows[0];
 }
 
@@ -38,10 +38,11 @@ export async function storeThought(content, embedding, metadata = {}, eventDate 
  */
 export async function checkNearDuplicate(queryEmbedding, threshold = 0.92) {
   const query = `
-    SELECT id, content, metadata, created_at, event_date,
+    SELECT id, content, metadata, created_at, event_date, expires_at,
            1 - (embedding <=> $1) AS similarity
     FROM thoughts
     WHERE superseded_by IS NULL
+      AND (expires_at IS NULL OR expires_at > NOW())
       AND 1 - (embedding <=> $1) >= $2
     ORDER BY embedding <=> $1
     LIMIT 1
@@ -57,10 +58,11 @@ export async function checkNearDuplicate(queryEmbedding, threshold = 0.92) {
  */
 export async function findContradictionCandidates(queryEmbedding, limit = 5) {
   const query = `
-    SELECT id, content, metadata, created_at, event_date,
+    SELECT id, content, metadata, created_at, event_date, expires_at,
            1 - (embedding <=> $1) AS similarity
     FROM thoughts
     WHERE superseded_by IS NULL
+      AND (expires_at IS NULL OR expires_at > NOW())
       AND 1 - (embedding <=> $1) BETWEEN 0.60 AND 0.91
     ORDER BY embedding <=> $1
     LIMIT $2
@@ -141,9 +143,9 @@ export async function searchThoughtsKeyword(queryText, limit = 10, filter = {}) 
  */
 export async function getRecentThoughts(limit = 20, offset = 0, includeSuperseded = false) {
   const query = `
-    SELECT id, content, metadata, created_at, event_date, superseded_by
+    SELECT id, content, metadata, created_at, event_date, superseded_by, expires_at
     FROM thoughts
-    ${includeSuperseded ? '' : 'WHERE superseded_by IS NULL'}
+    ${includeSuperseded ? '' : 'WHERE superseded_by IS NULL AND (expires_at IS NULL OR expires_at > NOW())'}
     ORDER BY created_at DESC
     LIMIT $1 OFFSET $2
   `;
@@ -157,10 +159,11 @@ export async function getRecentThoughts(limit = 20, offset = 0, includeSupersede
 export async function getThoughtsByDateRange(startDate, endDate, dateField = 'created_at') {
   const field = dateField === 'event_date' ? 'event_date' : 'created_at';
   const query = `
-    SELECT id, content, metadata, created_at, event_date, superseded_by
+    SELECT id, content, metadata, created_at, event_date, superseded_by, expires_at
     FROM thoughts
     WHERE ${field} >= $1 AND ${field} <= $2
       AND superseded_by IS NULL
+      AND (expires_at IS NULL OR expires_at > NOW())
     ORDER BY ${field} DESC
   `;
   const result = await pool.query(query, [startDate, endDate]);
@@ -172,7 +175,7 @@ export async function getThoughtsByDateRange(startDate, endDate, dateField = 'cr
  */
 export async function getThoughtById(id) {
   const query = `
-    SELECT id, content, metadata, created_at, event_date, superseded_by
+    SELECT id, content, metadata, created_at, event_date, superseded_by, expires_at
     FROM thoughts WHERE id = $1
   `;
   const result = await pool.query(query, [id]);
@@ -205,7 +208,7 @@ export async function updateMetadata(id, metadata) {
     UPDATE thoughts
     SET metadata = metadata || $2
     WHERE id = $1
-    RETURNING id, content, metadata, created_at, event_date, superseded_by
+    RETURNING id, content, metadata, created_at, event_date, superseded_by, expires_at
   `;
   const result = await pool.query(query, [id, metadata]);
   return result.rows[0];

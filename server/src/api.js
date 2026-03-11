@@ -118,12 +118,14 @@ app.post('/capture', async (req, res) => {
       metadata.supersedes = supersededIds.map(s => s.id);
     }
 
-    // 4. Parse event_date — from param or from metadata extraction
+    // 4. Parse event_date and expires_at — from param or from metadata extraction
     const resolvedEventDate = event_date || metadata.event_date || null;
-    delete metadata.event_date; // store in dedicated column, not metadata JSONB
+    const resolvedExpiresAt = metadata.expires_at || null;
+    delete metadata.event_date;  // store in dedicated column, not metadata JSONB
+    delete metadata.expires_at;  // store in dedicated column, not metadata JSONB
 
     // 5. Store the new thought
-    const thought = await db.storeThought(content, embedding, metadata, resolvedEventDate);
+    const thought = await db.storeThought(content, embedding, metadata, resolvedEventDate, resolvedExpiresAt);
 
     // 6. Mark contradicted thoughts as superseded + store all relationships
     for (const s of supersededIds) {
@@ -142,6 +144,7 @@ app.post('/capture', async (req, res) => {
         metadata: thought.metadata,
         created_at: thought.created_at,
         event_date: thought.event_date,
+        expires_at: thought.expires_at || undefined,
       },
       superseded: supersededIds.length > 0 ? supersededIds : undefined,
       relationships: relationships.length > 0 ? relationships : undefined,
