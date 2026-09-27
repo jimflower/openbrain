@@ -63,7 +63,7 @@ Answer with exactly one word on the first line (CONTRADICTS/EXTENDS/INFERS/UNREL
 async function extractLocalMetadata(content) {
   try {
     const prompt = METADATA_PROMPT.replace('{{CONTENT}}', content);
-    const response = await ollama.generate({ model: OLLAMA_LLM_MODEL, prompt, stream: false });
+    const response = await ollama.generate({ model: OLLAMA_LLM_MODEL, prompt, stream: false, think: false });
     const text = response.response.trim();
 
     let jsonText = text;
@@ -89,7 +89,7 @@ async function classifyRelationshipLocal(existingContent, newContent) {
     const prompt = RELATIONSHIP_PROMPT
       .replace('{{EXISTING}}', existingContent)
       .replace('{{NEW}}', newContent);
-    const response = await ollama.generate({ model: OLLAMA_LLM_MODEL, prompt, stream: false });
+    const response = await ollama.generate({ model: OLLAMA_LLM_MODEL, prompt, stream: false, think: false });
     const text = response.response.trim();
     const firstLine = text.split('\n')[0].trim().toUpperCase();
     const type = ['CONTRADICTS', 'EXTENDS', 'INFERS'].includes(firstLine) ? firstLine.toLowerCase() : 'unrelated';
